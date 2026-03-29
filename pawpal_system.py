@@ -1,4 +1,6 @@
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
 from enum import Enum
 
 
@@ -22,6 +24,8 @@ class Task:
     is_required: bool = False
     notes: str = ""
     completed: bool = False
+    preferred_time: str | None = None  # "HH:MM" format, e.g. "07:30"
+    due_date: date | None = None       # None = available any day
 
     def is_feasible(self, available_minutes: int) -> bool:
         """Return True if this task fits within the given time budget."""
@@ -42,6 +46,8 @@ class Task:
             "is_required": self.is_required,
             "notes": self.notes,
             "completed": self.completed,
+            "preferred_time": self.preferred_time or "--",
+            "due_date": str(self.due_date) if self.due_date else "--",
         }
 
 
@@ -66,8 +72,29 @@ class Pet:
         self.tasks = [t for t in self.tasks if t.title != title]
 
     def get_pending_tasks(self) -> list[Task]:
-        """Return all tasks that have not yet been marked complete."""
-        return [t for t in self.tasks if not t.completed]
+        """Return tasks that are incomplete and due today or earlier (no due_date = always due)."""
+        today = date.today()
+        return [
+            t for t in self.tasks
+            if not t.completed and (t.due_date is None or t.due_date <= today)
+        ]
+
+    def complete_task(self, title: str):
+        """Mark a task complete and, if it recurs, append the next occurrence.
+
+        Uses timedelta so date arithmetic handles month and year boundaries:
+          daily  -> due_date = today + timedelta(days=1)
+          weekly -> due_date = today + timedelta(weeks=1)
+          as-needed -> no recurrence; task is simply marked done.
+        """
+        task = next((t for t in self.tasks if t.title == title and not t.completed), None)
+        if not task:
+            return
+        task.mark_complete()
+        recurrence = {"daily": timedelta(days=1), "weekly": timedelta(weeks=1)}
+        delta = recurrence.get(task.frequency)
+        if delta:
+            self.tasks.append(replace(task, completed=False, due_date=date.today() + delta))
 
 
 @dataclass
@@ -85,11 +112,20 @@ class Owner:
         return {"time_available_per_day": self.time_available_per_day}
 
     def get_all_tasks(self) -> list[Task]:
-        """Aggregate pending tasks across all pets -Scheduler's single entry point."""
+        """Aggregate pending tasks across all pets - Scheduler's single entry point."""
         tasks = []
         for pet in self.pets:
             tasks.extend(pet.get_pending_tasks())
         return tasks
+
+    def get_tasks_for_pet(self, pet_name: str) -> list[Task]:
+        """Return pending tasks belonging to the named pet, or [] if pet not found."""
+        pet = next((p for p in self.pets if p.name.lower() == pet_name.lower()), None)
+        return pet.get_pending_tasks() if pet else []
+
+    def get_tasks_by_status(self, completed: bool) -> list[Task]:
+        """Return all tasks across all pets that match the given completion status."""
+        return [t for p in self.pets for t in p.tasks if t.completed == completed]
 
 
 @dataclass
@@ -97,7 +133,8 @@ class DailyPlan:
     scheduled_tasks: list[Task] = field(default_factory=list)
     unscheduled_tasks: list[Task] = field(default_factory=list)
     total_duration: int = 0
-    reasoning: dict = field(default_factory=dict)  # task title -> explanation
+    reasoning: dict = field(default_factory=dict)   # task title -> explanation
+    conflicts: list[str] = field(default_factory=list)  # warning messages
 
     def get_summary(self, owner: "Owner") -> str:
         """Render a formatted terminal view of the plan, grouped by pet."""
@@ -138,6 +175,11 @@ class DailyPlan:
         if self.unscheduled_tasks:
             lines.append(f"  Skipped    {len(self.unscheduled_tasks)} task{'s' if len(self.unscheduled_tasks) > 1 else ''}     "
                          f"{skipped_min} min unscheduled")
+        if self.conflicts:
+            lines.append("")
+            lines.append("  WARNINGS")
+            for warning in self.conflicts:
+                lines.append(f"  [!] {warning}")
         lines.append("=" * WIDTH)
         return "\n".join(lines)
 
@@ -159,6 +201,7 @@ class Scheduler:
             unscheduled_tasks=unscheduled,
             total_duration=sum(t.duration_minutes for t in scheduled),
             reasoning=self._explain(scheduled, unscheduled),
+            conflicts=self.detect_conflicts(scheduled),
         )
 
     def filter_tasks(self, tasks: list[Task], budget: int) -> tuple[list[Task], list[Task]]:
@@ -179,6 +222,37 @@ class Scheduler:
             tasks,
             key=lambda t: (not t.is_required, -Priority.rank(t.priority))
         )
+
+    def sort_by_time(self, tasks: list[Task]) -> list[Task]:
+        """Sort tasks by preferred_time in HH:MM order; tasks with no time sink to the end.
+
+        "HH:MM" strings sort correctly as plain strings because lexicographic
+        order matches chronological order when the format is zero-padded.
+        e.g. "07:00" < "09:30" < "14:00" < "99:99" (sentinel for no preference).
+        """
+        return sorted(
+            tasks,
+            key=lambda t: t.preferred_time if t.preferred_time else "99:99"
+        )
+
+    def detect_conflicts(self, tasks: list[Task]) -> list[str]:
+        """Return warning strings for any time slot shared by more than one scheduled task.
+
+        Lightweight strategy: group tasks by preferred_time using a dict, then
+        flag any slot with multiple entries. Tasks with no preferred_time are
+        skipped — they have no fixed slot to conflict on.
+        """
+        warnings = []
+        by_time: dict[str, list[str]] = defaultdict(list)
+        for task in tasks:
+            if task.preferred_time:
+                by_time[task.preferred_time].append(task.title)
+        for time_slot, titles in by_time.items():
+            if len(titles) > 1:
+                warnings.append(
+                    f"Time conflict at {time_slot}: {' and '.join(titles)}"
+                )
+        return warnings
 
     def _explain(self, scheduled: list[Task], unscheduled: list[Task]) -> dict:
         """Build a per-task reasoning dict describing why each task was included or skipped."""

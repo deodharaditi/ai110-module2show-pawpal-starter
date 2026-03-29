@@ -22,6 +22,15 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Smarter Scheduling
+
+Beyond the greedy time-budget scheduler, PawPal+ includes four algorithmic improvements:
+
+- **Sort by time** — `Scheduler.sort_by_time()` orders any task list chronologically using the `preferred_time` ("HH:MM") field. Tasks with no preferred time sort to the end. Zero-padded strings sort correctly as plain strings, so no time parsing is needed.
+- **Filter by pet or status** — `Owner.get_tasks_for_pet(name)` returns pending tasks for one pet by name; `Owner.get_tasks_by_status(completed)` returns all tasks across all pets matching a completion state.
+- **Recurring tasks** — `Pet.complete_task(title)` marks a task done and, for `daily` or `weekly` tasks, automatically appends a fresh copy with `due_date` set to tomorrow or next week using `timedelta`. `get_pending_tasks()` filters by `due_date <= today` so future occurrences stay hidden until they are due.
+- **Conflict detection** — `Scheduler.detect_conflicts()` groups scheduled tasks by `preferred_time` using a `defaultdict` and returns a warning string for any slot claimed by more than one task. Warnings appear in the plan summary under a WARNINGS section.
+
 ## Getting started
 
 ### Setup
