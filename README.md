@@ -31,6 +31,26 @@ Beyond the greedy time-budget scheduler, PawPal+ includes four algorithmic impro
 - **Recurring tasks** — `Pet.complete_task(title)` marks a task done and, for `daily` or `weekly` tasks, automatically appends a fresh copy with `due_date` set to tomorrow or next week using `timedelta`. `get_pending_tasks()` filters by `due_date <= today` so future occurrences stay hidden until they are due.
 - **Conflict detection** — `Scheduler.detect_conflicts()` groups scheduled tasks by `preferred_time` using a `defaultdict` and returns a warning string for any slot claimed by more than one task. Warnings appear in the plan summary under a WARNINGS section.
 
+## Testing PawPal+
+
+Run the full test suite with:
+
+```bash
+python -m pytest tests/test_pawpal.py -v
+```
+
+The suite contains 16 tests covering four areas:
+
+- **Core task behavior** — marking a task complete, adding tasks to a pet
+- **Sorting correctness** — chronological ordering by `preferred_time`, untimed tasks sink to end, no crash on all-untimed input
+- **Recurrence logic** — daily tasks produce a new copy due tomorrow, weekly tasks due in 7 days, `as-needed` tasks do not recur, missing titles do not crash
+- **Conflict detection** — same time slot triggers a warning with both task titles, different slots return no warnings, tasks with no `preferred_time` are never flagged
+- **Edge cases** — empty pet task list, future `due_date` excluded from pending, unknown pet name returns `[]`, zero time budget skips all tasks
+
+**Confidence level: 4 / 5**
+
+The scheduler's core logic (ranking, filtering, sorting, recurrence, conflict detection) is well-covered by targeted unit tests. The main gap is integration-level coverage: the Streamlit UI and the full `generate_plan()` pipeline are not tested automatically. An end-to-end test with multiple pets, a tight budget, and overlapping required tasks would push this to 5/5.
+
 ## Getting started
 
 ### Setup
