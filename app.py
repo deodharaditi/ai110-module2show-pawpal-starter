@@ -1,15 +1,28 @@
 import streamlit as st
 from pawpal_system import Owner, Pet, Task, Scheduler, Priority
 
+DATA_FILE = "data.json"
+
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
 st.title("🐾 PawPal+")
 
-# --- Session state ---
+# --- Session state: load saved data on first run ---
 if "owner" not in st.session_state:
-    st.session_state.owner = None
+    saved = Owner.load_from_json(DATA_FILE)
+    st.session_state.owner = saved
+    st.session_state.setup_done = saved is not None
+
 if "setup_done" not in st.session_state:
     st.session_state.setup_done = False
+
+
+def _save():
+    """Persist current owner state to disk, then rerun the UI."""
+    if st.session_state.owner:
+        st.session_state.owner.save_to_json(DATA_FILE)
+    st.rerun()
+
 
 # --- Step 1: Owner setup ---
 if not st.session_state.setup_done:
@@ -24,11 +37,21 @@ if not st.session_state.setup_done:
             time_available_per_day=int(time_available),
         )
         st.session_state.setup_done = True
-        st.rerun()
+        _save()
 
 else:
     owner: Owner = st.session_state.owner
-    st.success(f"Owner: **{owner.name}** | {owner.time_available_per_day} min available today")
+    col_hdr, col_reset = st.columns([4, 1])
+    with col_hdr:
+        st.success(f"Owner: **{owner.name}** | {owner.time_available_per_day} min available today")
+    with col_reset:
+        if st.button("Reset", help="Clear saved data and start over"):
+            import os
+            if os.path.exists(DATA_FILE):
+                os.remove(DATA_FILE)
+            st.session_state.owner = None
+            st.session_state.setup_done = False
+            st.rerun()
 
     # --- Step 2: Add a pet ---
     st.subheader("Step 2: Add a pet")
@@ -42,7 +65,7 @@ else:
 
     if st.button("Add pet"):
         owner.add_pet(Pet(name=pet_name, species=species, age=int(age)))
-        st.rerun()
+        _save()
 
     if owner.pets:
         st.write("**Pets in household:**", ", ".join(p.get_info() for p in owner.pets))
@@ -79,7 +102,7 @@ else:
                 is_required=is_required,
                 preferred_time=preferred_time.strip() or None,
             ))
-            st.rerun()
+            _save()
 
         # --- Pending task view with sorting and filtering ---
         all_tasks = owner.get_all_tasks()
@@ -101,20 +124,17 @@ else:
                     key="sort_mode",
                 )
 
-            # Apply pet filter
             if filter_pet == "All pets":
                 display_tasks = all_tasks
             else:
                 display_tasks = owner.get_tasks_for_pet(filter_pet)
 
-            # Apply sort
             scheduler = Scheduler(owner)
             if sort_mode == "Preferred time":
                 display_tasks = scheduler.sort_by_time(display_tasks)
             else:
                 display_tasks = scheduler.rank_tasks(display_tasks)
 
-            # Detect conflicts in the currently visible task set
             conflicts = scheduler.detect_conflicts(display_tasks)
             if conflicts:
                 st.markdown("**Scheduling conflicts detected:**")
@@ -133,14 +153,12 @@ else:
             scheduler = Scheduler(owner)
             plan = scheduler.generate_plan()
 
-            # Time budget progress bar
             budget = owner.time_available_per_day
             used = plan.total_duration
             pct = min(used / budget, 1.0) if budget else 0
             st.markdown(f"**Time used:** {used} / {budget} min")
             st.progress(pct)
 
-            # Conflict warnings — shown prominently before the task list
             if plan.conflicts:
                 st.markdown("### ⚠️ Scheduling conflicts")
                 st.caption(
@@ -150,7 +168,6 @@ else:
                 for warning in plan.conflicts:
                     st.warning(warning)
 
-            # Per-pet scheduled task breakdown
             scheduled_titles = {t.title for t in plan.scheduled_tasks}
             for pet in owner.pets:
                 pending = pet.get_pending_tasks()
@@ -167,7 +184,6 @@ else:
                     else:
                         st.error(f"✗ **{task.title}** {time_label} — {dur} | {pri}{req_badge}  _(skipped — no time remaining)_")
 
-            # Skipped task summary
             if plan.unscheduled_tasks:
                 skipped_min = sum(t.duration_minutes for t in plan.unscheduled_tasks)
                 st.info(

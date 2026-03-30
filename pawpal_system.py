@@ -1,3 +1,5 @@
+import json
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -50,6 +52,41 @@ class Task:
             "due_date": str(self.due_date) if self.due_date else "--",
         }
 
+    def _serialize(self) -> dict:
+        """Return a JSON-safe dict that round-trips back to a Task via Task._deserialize().
+
+        Unlike to_dict(), None values are preserved as null (not converted to '--')
+        and due_date is stored as an ISO string so it can be parsed back to date.
+        """
+        return {
+            "title": self.title,
+            "task_type": self.task_type,
+            "duration_minutes": self.duration_minutes,
+            "priority": self.priority.value,
+            "frequency": self.frequency,
+            "is_required": self.is_required,
+            "notes": self.notes,
+            "completed": self.completed,
+            "preferred_time": self.preferred_time,
+            "due_date": self.due_date.isoformat() if self.due_date else None,
+        }
+
+    @staticmethod
+    def _deserialize(data: dict) -> "Task":
+        """Reconstruct a Task from a dict produced by _serialize()."""
+        return Task(
+            title=data["title"],
+            task_type=data["task_type"],
+            duration_minutes=data["duration_minutes"],
+            priority=Priority(data["priority"]),
+            frequency=data.get("frequency", "daily"),
+            is_required=data.get("is_required", False),
+            notes=data.get("notes", ""),
+            completed=data.get("completed", False),
+            preferred_time=data.get("preferred_time"),
+            due_date=date.fromisoformat(data["due_date"]) if data.get("due_date") else None,
+        )
+
 
 @dataclass
 class Pet:
@@ -78,6 +115,28 @@ class Pet:
             t for t in self.tasks
             if not t.completed and (t.due_date is None or t.due_date <= today)
         ]
+
+    def _serialize(self) -> dict:
+        """Return a JSON-safe dict that round-trips back to a Pet via Pet._deserialize()."""
+        return {
+            "name": self.name,
+            "species": self.species,
+            "age": self.age,
+            "health_notes": self.health_notes,
+            "tasks": [t._serialize() for t in self.tasks],
+        }
+
+    @staticmethod
+    def _deserialize(data: dict) -> "Pet":
+        """Reconstruct a Pet (with all its tasks) from a dict produced by _serialize()."""
+        pet = Pet(
+            name=data["name"],
+            species=data["species"],
+            age=data["age"],
+            health_notes=data.get("health_notes", ""),
+        )
+        pet.tasks = [Task._deserialize(t) for t in data.get("tasks", [])]
+        return pet
 
     def complete_task(self, title: str):
         """Mark a task complete and, if it recurs, append the next occurrence.
@@ -126,6 +185,38 @@ class Owner:
     def get_tasks_by_status(self, completed: bool) -> list[Task]:
         """Return all tasks across all pets that match the given completion status."""
         return [t for p in self.pets for t in p.tasks if t.completed == completed]
+
+    def save_to_json(self, path: str = "data.json") -> None:
+        """Persist the owner's full state (pets and all tasks) to a JSON file.
+
+        Overwrites the file if it already exists. The file can be reloaded
+        with Owner.load_from_json(path) to restore the exact same state.
+        """
+        data = {
+            "name": self.name,
+            "time_available_per_day": self.time_available_per_day,
+            "pets": [p._serialize() for p in self.pets],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    @staticmethod
+    def load_from_json(path: str = "data.json") -> "Owner | None":
+        """Load an Owner from a JSON file written by save_to_json().
+
+        Returns None (without raising) if the file does not exist, so callers
+        can treat a missing file as 'no saved state' rather than an error.
+        """
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        owner = Owner(
+            name=data["name"],
+            time_available_per_day=data["time_available_per_day"],
+        )
+        owner.pets = [Pet._deserialize(p) for p in data.get("pets", [])]
+        return owner
 
 
 @dataclass

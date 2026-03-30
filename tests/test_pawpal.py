@@ -1,3 +1,6 @@
+import json
+import os
+import tempfile
 from datetime import date, timedelta
 
 import pytest
@@ -236,6 +239,62 @@ def test_rank_tasks_weighted_short_high_before_long_high():
     ]
     ranked = scheduler.rank_tasks_weighted(tasks, budget=60)
     assert ranked[0].title == "Short HIGH"
+
+
+# ---------------------------------------------------------------------------
+# JSON persistence
+# ---------------------------------------------------------------------------
+
+def test_save_and_load_round_trips_owner():
+    """save_to_json / load_from_json should restore name and time budget exactly."""
+    owner = Owner(name="Jordan", time_available_per_day=90)
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = f.name
+    try:
+        owner.save_to_json(path)
+        loaded = Owner.load_from_json(path)
+        assert loaded is not None
+        assert loaded.name == "Jordan"
+        assert loaded.time_available_per_day == 90
+    finally:
+        os.remove(path)
+
+
+def test_save_and_load_round_trips_pets_and_tasks():
+    """Pets and all task fields survive a save/load cycle without data loss."""
+    owner = Owner(name="Jordan", time_available_per_day=60)
+    pet = Pet(name="Mochi", species="dog", age=3)
+    pet.add_task(Task(
+        title="Morning walk",
+        task_type="walk",
+        duration_minutes=30,
+        priority=Priority.HIGH,
+        is_required=True,
+        preferred_time="08:00",
+        due_date=date(2026, 4, 1),
+    ))
+    owner.add_pet(pet)
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = f.name
+    try:
+        owner.save_to_json(path)
+        loaded = Owner.load_from_json(path)
+        assert len(loaded.pets) == 1
+        t = loaded.pets[0].tasks[0]
+        assert t.title == "Morning walk"
+        assert t.priority == Priority.HIGH
+        assert t.is_required is True
+        assert t.preferred_time == "08:00"
+        assert t.due_date == date(2026, 4, 1)
+    finally:
+        os.remove(path)
+
+
+def test_load_from_json_missing_file_returns_none():
+    """load_from_json should return None (not raise) when the file does not exist."""
+    result = Owner.load_from_json("nonexistent_file_xyz.json")
+    assert result is None
 
 
 def test_generate_plan_weighted_fits_more_tasks():
