@@ -188,12 +188,17 @@ class Scheduler:
     def __init__(self, owner: Owner):
         self.owner = owner
 
-    def generate_plan(self) -> DailyPlan:
-        """Retrieve, rank, and schedule tasks into a DailyPlan within the owner's time budget."""
+    def generate_plan(self, weighted: bool = True) -> DailyPlan:
+        """Retrieve, rank, and schedule tasks into a DailyPlan within the owner's time budget.
+
+        When weighted=True (default), uses score_task() for ranking so that time
+        efficiency is factored in alongside priority and required status.
+        When weighted=False, falls back to the simpler rank_tasks() sort.
+        """
         budget = self.owner.get_constraints()["time_available_per_day"]
         all_tasks = self.owner.get_all_tasks()
 
-        ranked = self.rank_tasks(all_tasks)
+        ranked = self.rank_tasks_weighted(all_tasks, budget) if weighted else self.rank_tasks(all_tasks)
         scheduled, unscheduled = self.filter_tasks(ranked, budget)
 
         return DailyPlan(
@@ -216,12 +221,40 @@ class Scheduler:
                 unscheduled.append(task)
         return scheduled, unscheduled
 
+    def score_task(self, task: Task, budget: int) -> float:
+        """Compute a numeric score for a task used by rank_tasks_weighted().
+
+        Score formula:
+          base        = priority rank (HIGH=3, MEDIUM=2, LOW=1)
+          required    = +10 bonus so required tasks always outrank optional ones
+          efficiency  = base / (duration_minutes / budget)
+                        rewards tasks that deliver high priority per minute of budget used
+
+        A 5-min HIGH task and a 60-min HIGH task both have base=3, but the
+        5-min task has a much higher efficiency score when budget is tight,
+        so it is scheduled first — leaving more room for other tasks.
+        """
+        base = Priority.rank(task.priority)
+        required_bonus = 10 if task.is_required else 0
+        duration_fraction = task.duration_minutes / budget if budget > 0 else 1
+        efficiency = base / duration_fraction
+        return required_bonus + efficiency
+
     def rank_tasks(self, tasks: list[Task]) -> list[Task]:
         """Sort tasks so required items come first, then by priority descending."""
         return sorted(
             tasks,
             key=lambda t: (not t.is_required, -Priority.rank(t.priority))
         )
+
+    def rank_tasks_weighted(self, tasks: list[Task], budget: int) -> list[Task]:
+        """Sort tasks by weighted score descending using score_task().
+
+        Produces a different ordering than rank_tasks() when high-priority tasks
+        have very different durations — shorter high-priority tasks float above
+        longer ones of equal priority, maximising the number of tasks that fit.
+        """
+        return sorted(tasks, key=lambda t: self.score_task(t, budget), reverse=True)
 
     def sort_by_time(self, tasks: list[Task]) -> list[Task]:
         """Sort tasks by preferred_time in HH:MM order; tasks with no time sink to the end.

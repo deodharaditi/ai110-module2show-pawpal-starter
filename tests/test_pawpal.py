@@ -202,3 +202,54 @@ def test_filter_tasks_zero_budget_skips_all():
     scheduled, unscheduled = scheduler.filter_tasks(tasks, budget=0)
     assert scheduled == []
     assert len(unscheduled) == 3
+
+
+# ---------------------------------------------------------------------------
+# Weighted scoring
+# ---------------------------------------------------------------------------
+
+def test_score_task_required_outscores_optional_same_priority():
+    """A required task should score higher than an optional task at the same priority and duration."""
+    owner, _ = make_owner(minutes=60)
+    scheduler = Scheduler(owner)
+    required = make_task(title="Required", priority=Priority.MEDIUM, is_required=True,  duration_minutes=10)
+    optional = make_task(title="Optional", priority=Priority.MEDIUM, is_required=False, duration_minutes=10)
+    assert scheduler.score_task(required, 60) > scheduler.score_task(optional, 60)
+
+
+def test_score_task_shorter_beats_longer_at_same_priority():
+    """Given equal priority, a shorter task should score higher than a longer one."""
+    owner, _ = make_owner(minutes=60)
+    scheduler = Scheduler(owner)
+    short = make_task(title="Short", priority=Priority.HIGH, duration_minutes=5)
+    long_ = make_task(title="Long",  priority=Priority.HIGH, duration_minutes=50)
+    assert scheduler.score_task(short, 60) > scheduler.score_task(long_, 60)
+
+
+def test_rank_tasks_weighted_short_high_before_long_high():
+    """rank_tasks_weighted should place a short HIGH task before a long HIGH task."""
+    owner, _ = make_owner(minutes=60)
+    scheduler = Scheduler(owner)
+    tasks = [
+        make_task(title="Long HIGH",  priority=Priority.HIGH, duration_minutes=55),
+        make_task(title="Short HIGH", priority=Priority.HIGH, duration_minutes=5),
+    ]
+    ranked = scheduler.rank_tasks_weighted(tasks, budget=60)
+    assert ranked[0].title == "Short HIGH"
+
+
+def test_generate_plan_weighted_fits_more_tasks():
+    """With a tight budget, weighted scheduling should fit more tasks than simple ranking."""
+    owner = Owner(name="Test", time_available_per_day=35)
+    pet = Pet(name="Buddy", species="dog", age=2)
+    # Simple ranking would pick Long HIGH first (60 min > budget, blocks Short HIGH)
+    # Weighted ranking picks Short HIGH (5 min) and Short MEDIUM (5 min) first
+    pet.add_task(make_task(title="Long HIGH",   priority=Priority.HIGH,   duration_minutes=30))
+    pet.add_task(make_task(title="Short HIGH",  priority=Priority.HIGH,   duration_minutes=5))
+    pet.add_task(make_task(title="Short MED",   priority=Priority.MEDIUM, duration_minutes=5))
+    owner.add_pet(pet)
+
+    weighted_plan  = Scheduler(owner).generate_plan(weighted=True)
+    simple_plan    = Scheduler(owner).generate_plan(weighted=False)
+
+    assert len(weighted_plan.scheduled_tasks) >= len(simple_plan.scheduled_tasks)
