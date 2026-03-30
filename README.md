@@ -4,8 +4,7 @@ PawPal+ is a Streamlit app that helps a busy pet owner stay consistent with dail
 
 ## 📸 Demo
 
-> _Add a screenshot of your running Streamlit app here._
-> `![PawPal+ Demo](demo_screenshot.png)`
+<a href="/course_images/ai110/demo_screenshot.png" target="_blank"><img src="/course_images/ai110/demo_screenshot.png" alt="PawPal+ Streamlit UI" width="700"></a>
 
 ---
 
