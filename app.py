@@ -1,6 +1,38 @@
 import streamlit as st
 from pawpal_system import Owner, Pet, Task, Scheduler, Priority
 
+# Priority display config — emoji badge + CSS background colour per level
+PRIORITY_STYLE = {
+    "high":   {"emoji": "🔴", "bg": "#3d1a1a", "label": "HIGH"},
+    "medium": {"emoji": "🟡", "bg": "#3d3519", "label": "MED"},
+    "low":    {"emoji": "🟢", "bg": "#1a3d22", "label": "LOW"},
+}
+
+
+def _task_card(task: Task, scheduled: bool | None = None) -> None:
+    """Render a single task as a colour-coded card using st.markdown."""
+    pval = task.priority.value
+    style = PRIORITY_STYLE.get(pval, PRIORITY_STYLE["low"])
+    time_str = task.preferred_time or "--:--"
+    req_tag = " ⭐ required" if task.is_required else ""
+
+    if scheduled is True:
+        status_icon = "✅"
+    elif scheduled is False:
+        status_icon = "❌"
+    else:
+        status_icon = ""
+
+    st.markdown(
+        f"""<div style="background:{style['bg']};border-radius:6px;padding:8px 12px;margin:4px 0;">
+        {style['emoji']} <strong>{task.title}</strong>{req_tag} &nbsp;
+        <code>{time_str}</code> &nbsp;·&nbsp; {task.duration_minutes} min &nbsp;·&nbsp;
+        <span style="font-size:0.85em;opacity:0.8;">{style['label']}</span>
+        {"&nbsp;" + status_icon if status_icon else ""}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
 DATA_FILE = "data.json"
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
@@ -120,7 +152,7 @@ else:
             with filter_col2:
                 sort_mode = st.selectbox(
                     "Sort by",
-                    ["Preferred time", "Priority"],
+                    ["Priority → Time", "Preferred time", "Priority only"],
                     key="sort_mode",
                 )
 
@@ -130,7 +162,9 @@ else:
                 display_tasks = owner.get_tasks_for_pet(filter_pet)
 
             scheduler = Scheduler(owner)
-            if sort_mode == "Preferred time":
+            if sort_mode == "Priority → Time":
+                display_tasks = scheduler.sort_by_priority_then_time(display_tasks)
+            elif sort_mode == "Preferred time":
                 display_tasks = scheduler.sort_by_time(display_tasks)
             else:
                 display_tasks = scheduler.rank_tasks(display_tasks)
@@ -141,7 +175,8 @@ else:
                 for warning in conflicts:
                     st.warning(f"⚠️ {warning} — consider adjusting the preferred time for one of these tasks.")
 
-            st.table([t.to_dict() for t in display_tasks])
+            for task in display_tasks:
+                _task_card(task)
 
     # --- Step 4: Generate schedule ---
     st.divider()
@@ -174,15 +209,8 @@ else:
                 if not pending:
                     continue
                 st.markdown(f"**{pet.name}** ({pet.species}, age {pet.age})")
-                for task in scheduler.sort_by_time(pending):
-                    time_label = f"`{task.preferred_time}`" if task.preferred_time else ""
-                    req_badge = " _(required)_" if task.is_required else ""
-                    dur = f"{task.duration_minutes} min"
-                    pri = task.priority.value.upper()
-                    if task.title in scheduled_titles:
-                        st.success(f"✓ **{task.title}** {time_label} — {dur} | {pri}{req_badge}")
-                    else:
-                        st.error(f"✗ **{task.title}** {time_label} — {dur} | {pri}{req_badge}  _(skipped — no time remaining)_")
+                for task in scheduler.sort_by_priority_then_time(pending):
+                    _task_card(task, scheduled=task.title in scheduled_titles)
 
             if plan.unscheduled_tasks:
                 skipped_min = sum(t.duration_minutes for t in plan.unscheduled_tasks)

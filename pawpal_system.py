@@ -347,6 +347,23 @@ class Scheduler:
         """
         return sorted(tasks, key=lambda t: self.score_task(t, budget), reverse=True)
 
+    def sort_by_priority_then_time(self, tasks: list[Task]) -> list[Task]:
+        """Sort by required status, then priority descending, then preferred_time ascending.
+
+        Within each priority tier, tasks are ordered chronologically so the
+        display reads naturally as a day's agenda:
+          required HIGH 07:30  →  required HIGH 08:00  →  optional MEDIUM 14:00  →  ...
+        Tasks with no preferred_time sort to the end of their priority group.
+        """
+        return sorted(
+            tasks,
+            key=lambda t: (
+                not t.is_required,
+                -Priority.rank(t.priority),
+                t.preferred_time if t.preferred_time else "99:99",
+            )
+        )
+
     def sort_by_time(self, tasks: list[Task]) -> list[Task]:
         """Sort tasks by preferred_time in HH:MM order; tasks with no time sink to the end.
 

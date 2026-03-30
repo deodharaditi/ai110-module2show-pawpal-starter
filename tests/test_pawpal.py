@@ -80,6 +80,27 @@ def test_sort_by_time_untimed_tasks_sink_to_end():
     assert sorted_tasks[1].title == "No time task"
 
 
+def test_sort_by_priority_then_time():
+    """Required tasks come first; within the same priority, earlier time precedes later."""
+    owner, _ = make_owner()
+    scheduler = Scheduler(owner)
+    tasks = [
+        make_task(title="Low no-time",     priority=Priority.LOW,    preferred_time=None),
+        make_task(title="High 14:00",      priority=Priority.HIGH,   preferred_time="14:00"),
+        make_task(title="High 08:00",      priority=Priority.HIGH,   preferred_time="08:00"),
+        make_task(title="Req Med 07:00",   priority=Priority.MEDIUM, preferred_time="07:00", is_required=True),
+    ]
+    result = scheduler.sort_by_priority_then_time(tasks)
+    titles = [t.title for t in result]
+    # required always first
+    assert titles[0] == "Req Med 07:00"
+    # then HIGH in time order
+    assert titles[1] == "High 08:00"
+    assert titles[2] == "High 14:00"
+    # LOW with no time sinks last
+    assert titles[3] == "Low no-time"
+
+
 def test_sort_by_time_all_untimed_no_crash():
     """sort_by_time on tasks with no preferred_time should not raise."""
     owner, _ = make_owner()
