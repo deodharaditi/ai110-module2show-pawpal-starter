@@ -48,13 +48,17 @@ This tradeoff is reasonable for this scenario because the app targets casual pet
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+AI was used across every phase of the project, but the role shifted depending on the phase. During design, it was a brainstorming partner — asked to identify what classes were needed, what methods each should expose, and where responsibilities could become tangled. During implementation, it generated first drafts of methods like `complete_task()` and `detect_conflicts()` that I then read carefully before accepting. During testing, it proposed a test plan covering happy paths and edge cases, then wrote the actual test functions. During documentation, it drafted docstrings and README sections from the existing code.
+
+The most effective prompts were narrow and specific rather than open-ended. Asking "write a method that marks a task complete and appends a next occurrence for daily or weekly frequency using timedelta" produced immediately usable code. Asking "how should I design the scheduler?" produced a wall of generic advice. Framing questions around a concrete constraint ("the Scheduler should only take owner as an argument — how do I access the pet from there?") consistently returned more useful output than asking for high-level opinions.
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+The clearest rejection was the original `Scheduler.__init__` skeleton, which took both `owner` and `pet` as separate constructor arguments. The AI generated this because both objects are logically relevant to the scheduler, and it is a natural first instinct to pass everything a class needs directly into its constructor. However, `Owner` already holds a reference to `Pet` — passing `pet` separately creates two independent paths to the same object, which means they can silently fall out of sync if one is updated and the other is not.
+
+The fix was to remove the `pet` parameter entirely and have `Scheduler` access the pet via `self.owner.pets`. This was verified by checking: if `Owner` is the single source of truth, no other object should hold a separate reference to the same data. The AI accepted the correction immediately when the reasoning was stated explicitly, which confirmed the original suggestion was a default pattern rather than a considered design choice.
+
+A second modification: when asked for a "Pythonic" simplification of `filter_tasks()`, the AI suggested replacing the explicit `remaining` loop with `itertools.accumulate`. The accumulate version was shorter but required a reader to mentally simulate two parallel lists to understand what was happening. The explicit loop makes the budget deduction visible on every iteration — which is the point of the function. I kept the original. Shorter is not always clearer, and clarity matters more in code that encodes a business rule.
 
 ---
 
@@ -62,13 +66,13 @@ This tradeoff is reasonable for this scenario because the app targets casual pet
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The test suite covers four behavioral areas: core task operations (`mark_complete`, `add_task`), sorting correctness (chronological order, untimed tasks last, no crash on all-untimed input), recurrence logic (daily → tomorrow, weekly → +7 days, as-needed → no recurrence, missing title → no crash), and conflict detection (same slot triggers warning, different slots return empty, no preferred time is never flagged). Edge cases include an empty pet task list, a task with a future `due_date` that should be excluded from pending, an unknown pet name returning `[]`, and a zero time budget that skips every task.
+
+These tests mattered because the scheduling algorithm is invisible in the UI — a user just sees the final plan. Without unit tests there is no way to verify that the greedy filter, recurrence logic, and conflict detection behave correctly for inputs that the manual demo does not exercise.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+Confidence level: 4 out of 5. All 16 tests pass and cover the core decision points. The remaining gap is integration coverage: there are no automated tests for the Streamlit session state flow, and `generate_plan()` is tested implicitly through its components but not as a full end-to-end call with multiple pets, a tight budget, and overlapping required tasks. That scenario would be the next test to write.
 
 ---
 
@@ -76,12 +80,12 @@ This tradeoff is reasonable for this scenario because the app targets casual pet
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The class boundary decisions held up well throughout the build. Keeping `Scheduler` focused on scheduling logic (ranking, filtering, sorting, conflict detection) and pushing all data mutation into `Pet` and `Owner` meant that adding new features — recurring tasks, conflict detection, sort by time — never required touching classes that were already working. Each addition slotted into the existing structure without breaking anything else.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+The conflict detector uses exact time-string matching. A more useful version would convert `preferred_time` + `duration_minutes` into a real time interval and flag any two tasks whose intervals overlap. This would catch cases like a 30-minute task at `08:00` overlapping with a task at `08:15` — a real conflict that the current detector silently misses. The change would require storing start times more carefully but would make the warnings genuinely reliable rather than approximate.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important thing learned was that AI collaboration works best when the human holds the design constraints and the AI generates within them — not the other way around. Every time a suggestion was accepted without checking it against the design (does this create a duplicate reference? does this make the method public when it should be private?), a correction was needed later. Every time a constraint was stated explicitly before asking for code, the output was usable with minimal modification. The lead architect role is not about writing every line — it is about knowing which questions to ask, which suggestions to scrutinize, and which design rules are non-negotiable.
