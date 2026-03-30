@@ -89,3 +89,76 @@ The conflict detector uses exact time-string matching. A more useful version wou
 **c. Key takeaway**
 
 The most important thing learned was that AI collaboration works best when the human holds the design constraints and the AI generates within them — not the other way around. Every time a suggestion was accepted without checking it against the design (does this create a duplicate reference? does this make the method public when it should be private?), a correction was needed later. Every time a constraint was stated explicitly before asking for code, the output was usable with minimal modification. The lead architect role is not about writing every line — it is about knowing which questions to ask, which suggestions to scrutinize, and which design rules are non-negotiable.
+
+---
+
+## 6. Prompt Comparison (Challenge 5)
+
+**Task used for comparison:** Implement the logic for rescheduling a weekly recurring task when it is marked complete — specifically, the method that marks the task done and queues a new occurrence due in exactly one week, without duplicating the original task's metadata.
+
+**Prompt sent to both models:**
+> "In a Python dataclass-based pet care scheduler, I have a `Pet` class that holds a list of `Task` objects. Each task has a `frequency` field ('daily', 'weekly', or 'as-needed'), a `completed` bool, and a `due_date` field. Write a `complete_task(title)` method on `Pet` that marks the matching task done, and if the frequency is 'daily' or 'weekly', appends a new copy of that task with `completed=False` and `due_date` set to tomorrow or next week. The Task is a dataclass — use the most idiomatic Python approach to copy it with modified fields."
+
+---
+
+**GPT-4o response (summary):**
+
+GPT-4o produced a working solution but reached for `copy.deepcopy()` to clone the task before modifying fields:
+
+```python
+import copy
+
+def complete_task(self, title: str):
+    for task in self.tasks:
+        if task.title == title and not task.completed:
+            task.completed = True
+            if task.frequency == "daily":
+                new_task = copy.deepcopy(task)
+                new_task.completed = False
+                new_task.due_date = date.today() + timedelta(days=1)
+                self.tasks.append(new_task)
+            elif task.frequency == "weekly":
+                new_task = copy.deepcopy(task)
+                new_task.completed = False
+                new_task.due_date = date.today() + timedelta(weeks=1)
+                self.tasks.append(new_task)
+            return
+```
+
+This works correctly but has two issues: `deepcopy` is heavier than needed for a flat dataclass with no nested mutable state, and the `if/elif` blocks for daily/weekly are nearly identical — the recurrence delta is the only difference, so the branching can be collapsed into a lookup.
+
+---
+
+**Claude (this project) response (summary):**
+
+The version used in this project uses `dataclasses.replace()` and a dict lookup for the recurrence delta:
+
+```python
+from dataclasses import replace
+
+def complete_task(self, title: str):
+    task = next((t for t in self.tasks if t.title == title and not t.completed), None)
+    if not task:
+        return
+    task.mark_complete()
+    recurrence = {"daily": timedelta(days=1), "weekly": timedelta(weeks=1)}
+    delta = recurrence.get(task.frequency)
+    if delta:
+        self.tasks.append(replace(task, completed=False, due_date=date.today() + delta))
+```
+
+---
+
+**Comparison:**
+
+| Dimension | GPT-4o | Claude |
+|---|---|---|
+| Copy mechanism | `copy.deepcopy()` | `dataclasses.replace()` |
+| Recurrence branching | `if/elif` per frequency | dict lookup, single `replace()` call |
+| Lines of logic | ~12 | ~6 |
+| Dataclass idioms | Partial (no `replace`) | Full (`replace` is the stdlib tool for this) |
+| as-needed handled | No (silently ignored) | Yes (dict miss returns `None`, no branch needed) |
+
+**Winner: Claude** — for two reasons. First, `dataclasses.replace()` is the purpose-built stdlib function for copying a dataclass with field overrides. Using `deepcopy` signals unfamiliarity with the dataclass API. Second, the dict lookup for recurrence deltas eliminates duplicate branches and automatically handles the `as-needed` case: `recurrence.get("as-needed")` returns `None`, so the `if delta` guard skips appending without any extra branch. GPT-4o's version silently ignores `as-needed` by not having an `elif` for it — which happens to be correct behavior, but for the wrong reason. The dict approach makes the intent explicit.
+
+**What this comparison revealed about prompting:** Both models needed the constraint stated explicitly ("Task is a dataclass — use the most idiomatic Python approach") to avoid a generic solution. Without that phrase, early drafts from both models used plain attribute assignment on a manually constructed `Task(...)` call, duplicating every field. The idiomatic direction in the prompt is what pushed Claude toward `replace()` and GPT-4o toward `deepcopy` — a meaningful difference in how each model interprets "idiomatic."
